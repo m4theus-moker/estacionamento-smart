@@ -1,0 +1,36 @@
+schema: spec-driven
+
+context: |
+  Project: Estacionamento Smart — sistema web de gerenciamento de estacionamentos.
+
+  Domain: Usuários (clientes e administradores), veículos, vagas, reservas,
+  registros de uso (Estacionamento) e tarifas. Ver docs/domain-model.md
+  para os conceitos completos.
+
+  Frontend:
+    Reflex é a tecnologia obrigatória para implementação das interfaces
+    frontend do projeto (Python). Não introduzir outra tecnologia de
+    frontend (React, Vue, Angular, Streamlit, etc.) sem uma mudança
+    explícita da decisão arquitetural.
+
+  Backend:
+    Xano é a plataforma obrigatória de backend. Lógica de negócio,
+    endpoints de API, autenticação e persistência de dados são
+    implementados em XanoScript (.xs) e sincronizados via Xano CLI.
+    Não introduzir outra tecnologia de backend (ex.: NestJS, Django,
+    Express) sem uma mudança explícita da decisão arquitetural.
+
+  Architecture: O frontend (Reflex) consome os endpoints REST expostos
+  pelo backend (Xano). Toda regra de negócio e de autorização vive no
+  Xano — o frontend nunca deve ser tratado como mecanismo de segurança.
+
+  Development: Implementar mudanças incrementalmente utilizando OpenSpec,
+  respeitando a ordem MVP → Intermediário → Avançado definida no
+  project-overview.
+
+  Language: Escrever os artefatos OpenSpec (proposal, specs, design, tasks)
+  em português brasileiro.
+
+# rules e operations: adicionar somente quando necessárias para um
+# workflow específico. Manter este arquivo curto — ele é injetado no
+# contexto do agente em praticamente todas as mudanças.

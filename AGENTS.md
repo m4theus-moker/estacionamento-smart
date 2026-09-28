@@ -1,56 +1,35 @@
-<!-- reflex managed begin (do not edit inside this block; add custom content outside the markers) -->
-# Agents
+# AGENTS.md — Estacionamento Smart
 
-This project uses the **Reflex agent skills** � up-to-date knowledge for building full-stack Python web apps with [Reflex](https://reflex.dev). Install them first, then use them as described below.
+Este arquivo contém as regras de como o agente de IA deve trabalhar neste projeto. Ele não repete o conteúdo de `docs/project-overview.md` nem de `docs/domain-model.md` — consulte esses documentos quando precisar de contexto sobre o que o projeto é ou quais são seus conceitos.
 
-## Installing the Skills
+## Documentação
 
-Before working on this project, make sure the Reflex skills are available to you.
+Antes de propor ou implementar qualquer mudança significativa, consultar `docs/project-overview.md` e `docs/domain-model.md`. Não presumir funcionalidades, entidades ou regras que não estejam documentadas ali ou em uma spec já aprovada.
 
-### Claude Code
+## Frontend
 
-If the skills are not already available, install them yourself by running these shell commands:
+O frontend do projeto deve ser implementado exclusivamente com Reflex. Utilize os mecanismos próprios do Reflex para componentes, estado (`State`), eventos, páginas e interação. Não introduza outra tecnologia de frontend para substituir ou complementar o Reflex, salvo quando houver uma alteração arquitetural explicitamente aprovada.
 
-```bash
-claude plugin marketplace add reflex-dev/agent-skills
-claude plugin install reflex@reflex-agent-skills
-```
+## Backend
 
-Newly installed plugins load on the next session. After installing, tell the user to restart the session so the skills auto-load; until then, read the skill files directly from `~/.claude/plugins/` when you need them.
+O backend do projeto deve ser implementado exclusivamente com Xano, usando XanoScript (arquivos `.xs`). Não escreva um backend alternativo (NestJS, Express, Django, etc.) para substituir ou complementar o Xano. Antes de implementar ou alterar lógica de backend, consulte o Xano Developer MCP para documentação e validação de sintaxe — não presuma sintaxe de XanoScript de memória.
 
-### Other agents (Cursor, OpenCode, Codex, Pi)
+## Arquitetura
 
-```
-npx skills add reflex-dev/agent-skills
-```
+O frontend (Reflex) consome os endpoints REST expostos pelo backend (Xano) — a comunicação entre as camadas nunca deve pressupor acesso direto a um banco de dados fora do Xano. Reutilizar entidades e estruturas já definidas no `domain-model.md` em vez de recriá-las por funcionalidade. Não modificar funcionalidades fora do escopo da change atual sem justificativa.
 
-Or clone https://github.com/reflex-dev/agent-skills and copy the `skills/` folders into your agent's skill directory (see the repo README for paths).
+## Segurança
 
-### Verifying
+Toda regra de autorização (o que cliente e administrador podem fazer) deve ser aplicada no backend (Xano) — o frontend Reflex nunca é mecanismo de segurança. O valor cobrado em `Estacionamento` deve sempre ser recalculado no backend a partir dos horários reais de entrada e saída, nunca aceito diretamente do frontend. Nunca coloque tokens ou credenciais do Xano em arquivos versionados.
 
-Before writing or editing any Reflex code, confirm these three skills are available: `reflex-docs`, `setup-python-env`, and `reflex-process-management`. If they are not, STOP and run the install step above � do not proceed without them.
+## Desenvolvimento
 
-## Using the Skills
+Mudanças devem seguir o fluxo OpenSpec: explore → propose → review → apply → archive. Seguir a ordem definida nos três níveis do projeto (MVP → Intermediário → Avançado) descrita em `docs/project-overview.md`, evitando implementar funcionalidades de um nível posterior antes das dependências do nível anterior estarem prontas.
 
-### Reflex documentation
+## Testes
 
-For anything about Reflex APIs � components, state management, events, styling, database, routing, authentication � use the **reflex-docs** skill rather than relying on memory. It carries current, version-accurate docs.
+Toda mudança funcional deve possuir uma estratégia de verificação mínima (cenários de sucesso e de erro), especialmente para: conflito de reservas na mesma vaga/período, cálculo do valor a partir do tempo real de permanência, e regras de autorização entre cliente e administrador.
 
-### Initializing a new Reflex project
+## Idioma
 
-When starting a new Reflex project or setting up a development environment, you **must** follow the **setup-python-env** skill before doing anything else.
-
-Do not skip any steps. Do not assume a virtual environment or Reflex is already available � always verify first by following the skill's instructions in order.
-
-After the environment is ready and Reflex is installed, run:
-
-```bash
-reflex init
-```
-
-Then proceed with the user's request.
-
-### Managing a Reflex process
-
-When you need to compile, run, reload, or debug a Reflex application, follow the **reflex-process-management** skill for the correct sequence and error investigation steps.
-<!-- reflex managed end -->
+Escrever os artefatos do OpenSpec (proposal, specs, design, tasks) em português brasileiro.
