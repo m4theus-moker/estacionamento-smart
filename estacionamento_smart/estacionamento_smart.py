@@ -8,8 +8,9 @@ from estacionamento_smart.styles import THEME_APPEARANCE, ACCENT_COLOR, RADIUS, 
 from estacionamento_smart.components.navbar import navbar
 from estacionamento_smart.components.dashboard_card import dashboard_card
 
-# URL base oficial da API do Xano
-XANO_API_URL = "https://x8ki-letl-twmt.n7.xano.io/api:o7T2IhYl"
+# URLs base da API do Xano
+XANO_AUTH_API_URL = "https://x8ki-letl-twmt.n7.xano.io/api:o7T2IhYl"
+XANO_VEHICLE_API_URL = "https://x8ki-letl-twmt.n7.xano.io/api:vehicle"
 
 
 class AuthState(rx.State):
@@ -65,7 +66,7 @@ class AuthState(rx.State):
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"{XANO_API_URL}/auth/login",
+                    f"{XANO_AUTH_API_URL}/auth/login",
                     json={"email": self.login_email, "password": self.login_password}
                 )
             data = response.json()
@@ -140,6 +141,143 @@ class AuthState(rx.State):
         return rx.redirect("/login")
 
 
+class VehicleState(rx.State):
+    """Estado para gerenciamento de veículos."""
+    vehicles: list[dict] = []
+    form_id: int = 0
+    form_plate: str = ""
+    form_brand: str = ""
+    form_model: str = ""
+    form_color: str = ""
+    form_year: int = 2024
+    is_editing: bool = False
+    error_message: str = ""
+    success_message: str = ""
+    is_loading: bool = False
+
+    def set_form_plate(self, value: str):
+        self.form_plate = (value or "").upper()
+
+    def set_form_brand(self, value: str):
+        self.form_brand = value or ""
+
+    def set_form_model(self, value: str):
+        self.form_model = value or ""
+
+    def set_form_color(self, value: str):
+        self.form_color = value or ""
+
+    def set_form_year(self, value: str):
+        try:
+            self.form_year = int(value) if value else 2024
+        except ValueError:
+            self.form_year = 2024
+
+    async def load_vehicles(self):
+        auth = await self.get_state(AuthState)
+        if not auth.token:
+            return
+        self.is_loading = True
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    f"{XANO_VEHICLE_API_URL}/vehicle",
+                    headers={"Authorization": f"Bearer {auth.token}"}
+                )
+            if response.status_code == 200:
+                self.vehicles = response.json() or []
+            else:
+                self.vehicles = []
+        except Exception as e:
+            self.error_message = f"Erro ao carregar veículos: {str(e)}"
+        finally:
+            self.is_loading = False
+
+    def start_add(self):
+        self.form_id = 0
+        self.form_plate = ""
+        self.form_brand = ""
+        self.form_model = ""
+        self.form_color = ""
+        self.form_year = 2024
+        self.is_editing = False
+        self.error_message = ""
+        self.success_message = ""
+
+    def start_edit(self, vehicle: dict):
+        self.form_id = vehicle.get("id", 0)
+        self.form_plate = vehicle.get("plate", "")
+        self.form_brand = vehicle.get("brand", "")
+        self.form_model = vehicle.get("model", "")
+        self.form_color = vehicle.get("color", "")
+        self.form_year = vehicle.get("year", 2024)
+        self.is_editing = True
+        self.error_message = ""
+        self.success_message = ""
+
+    async def save_vehicle(self):
+        auth = await self.get_state(AuthState)
+        if not auth.token:
+            return
+        self.error_message = ""
+        self.success_message = ""
+        self.is_loading = True
+        try:
+            payload = {
+                "plate": self.form_plate,
+                "brand": self.form_brand,
+                "model": self.form_model,
+                "color": self.form_color,
+                "year": self.form_year,
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                if self.form_id == 0:
+                    response = await client.post(
+                        f"{XANO_VEHICLE_API_URL}/vehicle",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {auth.token}"}
+                    )
+                else:
+                    payload["id"] = self.form_id
+                    response = await client.put(
+                        f"{XANO_VEHICLE_API_URL}/vehicle/{self.form_id}",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {auth.token}"}
+                    )
+            data = response.json()
+            if response.status_code in [200, 201]:
+                self.success_message = "Veículo salvo com sucesso!"
+                self.start_add()
+                await self.load_vehicles()
+            else:
+                self.error_message = data.get("message", "Erro ao salvar veículo.")
+        except Exception as e:
+            self.error_message = f"Erro de conexão: {str(e)}"
+        finally:
+            self.is_loading = False
+
+    async def delete_vehicle(self, vehicle_id: int):
+        auth = await self.get_state(AuthState)
+        if not auth.token:
+            return
+        self.error_message = ""
+        self.success_message = ""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.delete(
+                    f"{XANO_VEHICLE_API_URL}/vehicle/{vehicle_id}",
+                    headers={"Authorization": f"Bearer {auth.token}"}
+                )
+            if response.status_code == 200:
+                self.success_message = "Veículo excluído com sucesso!"
+                await self.load_vehicles()
+            else:
+                data = response.json()
+                self.error_message = data.get("message", "Erro ao excluir veículo.")
+        except Exception as e:
+            self.error_message = f"Erro de conexão: {str(e)}"
+
+
 def index() -> rx.Component:
     return rx.vstack(
         navbar(AuthState),
@@ -181,7 +319,7 @@ def index() -> rx.Component:
                                     icon="🚗",
                                     title="Veículos",
                                     description="Gerencie os veículos cadastrados na sua conta de forma rápida.",
-                                    href="#",
+                                    href="/vehicles",
                                 ),
                                 dashboard_card(
                                     icon="🅿️",
@@ -446,6 +584,153 @@ def signup_page() -> rx.Component:
     )
 
 
+def vehicles_page() -> rx.Component:
+    return rx.vstack(
+        navbar(AuthState),
+        rx.center(
+            rx.container(
+                rx.vstack(
+                    rx.hstack(
+                        rx.link(rx.button("← Voltar ao Painel", variant="soft", size="2"), href="/"),
+                        rx.spacer(),
+                        align="center",
+                        width="100%",
+                    ),
+                    rx.heading("Gerenciamento de Veículos", size="7", weight="bold", color="var(--gray-12)"),
+                    rx.text("Cadastre e gerencie os veículos associados à sua conta.", size="3", color="var(--gray-11)"),
+                    rx.box(height="2"),
+                    rx.cond(
+                        VehicleState.error_message != "",
+                        rx.callout(VehicleState.error_message, icon="triangle_alert", color_scheme="red", size="2", width="100%"),
+                    ),
+                    rx.cond(
+                        VehicleState.success_message != "",
+                        rx.callout(VehicleState.success_message, icon="check", color_scheme="green", size="2", width="100%"),
+                    ),
+                    # Formulário de Cadastro/Edição
+                    rx.card(
+                        rx.vstack(
+                            rx.heading(rx.cond(VehicleState.is_editing, "Editar Veículo", "Cadastrar Novo Veículo"), size="5", weight="bold"),
+                            rx.grid(
+                                rx.vstack(
+                                    rx.text("Placa", size="2", weight="bold"),
+                                    rx.input(placeholder="ABC-1234", value=VehicleState.form_plate, on_change=VehicleState.set_form_plate, width="100%"),
+                                    align="start", width="100%", spacing="1",
+                                ),
+                                rx.vstack(
+                                    rx.text("Marca", size="2", weight="bold"),
+                                    rx.input(placeholder="Ex: Toyota", value=VehicleState.form_brand, on_change=VehicleState.set_form_brand, width="100%"),
+                                    align="start", width="100%", spacing="1",
+                                ),
+                                rx.vstack(
+                                    rx.text("Modelo", size="2", weight="bold"),
+                                    rx.input(placeholder="Ex: Corolla", value=VehicleState.form_model, on_change=VehicleState.set_form_model, width="100%"),
+                                    align="start", width="100%", spacing="1",
+                                ),
+                                rx.vstack(
+                                    rx.text("Cor", size="2", weight="bold"),
+                                    rx.input(placeholder="Ex: Prata", value=VehicleState.form_color, on_change=VehicleState.set_form_color, width="100%"),
+                                    align="start", width="100%", spacing="1",
+                                ),
+                                rx.vstack(
+                                    rx.text("Ano", size="2", weight="bold"),
+                                    rx.input(placeholder="2024", value=VehicleState.form_year.to_string(), on_change=VehicleState.set_form_year, width="100%"),
+                                    align="start", width="100%", spacing="1",
+                                ),
+                                columns=rx.breakpoints(initial="1", sm="2", md="3"),
+                                spacing="4",
+                                width="100%",
+                            ),
+                            rx.hstack(
+                                rx.button(
+                                    rx.cond(VehicleState.is_editing, "Atualizar Veículo", "Cadastrar Veículo"),
+                                    on_click=VehicleState.save_vehicle,
+                                    color_scheme="indigo",
+                                    size="3",
+                                    cursor="pointer",
+                                ),
+                                rx.cond(
+                                    VehicleState.is_editing,
+                                    rx.button("Cancelar", on_click=VehicleState.start_add, variant="soft", color_scheme="gray", size="3", cursor="pointer"),
+                                ),
+                                spacing="3",
+                                padding_top="2",
+                            ),
+                            spacing="4",
+                            width="100%",
+                        ),
+                        padding="5",
+                        width="100%",
+                        border="1px solid var(--gray-4)",
+                    ),
+                    rx.box(height="2"),
+                    rx.heading("Meus Veículos", size="6", weight="bold", color="var(--gray-12)"),
+                    # Lista de Veículos
+                    rx.cond(
+                        VehicleState.vehicles.length() > 0,
+                        rx.table.root(
+                            rx.table.header(
+                                rx.table.row(
+                                    rx.table.column_header_cell("Placa"),
+                                    rx.table.column_header_cell("Marca"),
+                                    rx.table.column_header_cell("Modelo"),
+                                    rx.table.column_header_cell("Cor"),
+                                    rx.table.column_header_cell("Ano"),
+                                    rx.table.column_header_cell("Ações"),
+                                )
+                            ),
+                            rx.table.body(
+                                rx.foreach(
+                                    VehicleState.vehicles,
+                                    lambda v: rx.table.row(
+                                        rx.table.cell(v["plate"], weight="bold"),
+                                        rx.table.cell(v["brand"]),
+                                        rx.table.cell(v["model"]),
+                                        rx.table.cell(v["color"]),
+                                        rx.table.cell(v["year"]),
+                                        rx.table.cell(
+                                            rx.hstack(
+                                                rx.button("Editar", size="1", variant="soft", color_scheme="indigo", on_click=lambda: VehicleState.start_edit(v)),
+                                                rx.button("Excluir", size="1", variant="soft", color_scheme="red", on_click=lambda: VehicleState.delete_vehicle(v["id"])),
+                                                spacing="2",
+                                            )
+                                        ),
+                                    )
+                                )
+                            ),
+                            width="100%",
+                            variant="surface",
+                        ),
+                        rx.card(
+                            rx.center(
+                                rx.vstack(
+                                    rx.text("Nenhum veículo cadastrado no momento.", size="3", color="var(--gray-11)"),
+                                    align="center",
+                                    padding="6",
+                                ),
+                                width="100%",
+                            ),
+                            width="100%",
+                            border="1px solid var(--gray-4)",
+                        ),
+                    ),
+                    spacing="5",
+                    width="100%",
+                    on_mount=VehicleState.load_vehicles,
+                ),
+                max_width=CONTAINER_MAX_WIDTH,
+                width="100%",
+                padding_x="4",
+                padding_y="8",
+            ),
+            width="100%",
+        ),
+        width="100%",
+        min_height="100vh",
+        background="var(--color-background)",
+    )
+
+
 app = rx.App(
     theme=rx.theme(
         appearance=THEME_APPEARANCE,
@@ -457,3 +742,4 @@ app = rx.App(
 app.add_page(index, route="/")
 app.add_page(login_page, route="/login")
 app.add_page(signup_page, route="/signup")
+app.add_page(vehicles_page, route="/vehicles", on_load=VehicleState.load_vehicles)

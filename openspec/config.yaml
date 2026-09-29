@@ -12,6 +12,7 @@ context: |
     frontend do projeto (Python). Não introduzir outra tecnologia de
     frontend (React, Vue, Angular, Streamlit, etc.) sem uma mudança
     explícita da decisão arquitetural.
+    
 
   Backend:
     Xano é a plataforma obrigatória de backend. Lógica de negócio,
