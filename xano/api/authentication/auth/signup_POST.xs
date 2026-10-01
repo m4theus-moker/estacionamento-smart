@@ -6,6 +6,7 @@ query "auth/signup" verb=POST {
     text name?
     email email? filters=trim|lower
     text password?
+    text role?
   }
 
   stack {
@@ -28,14 +29,14 @@ query "auth/signup" verb=POST {
         name      : $input.name
         email     : $input.email
         password  : $input.password
-        role      : "cliente"
+        role      : $input.role != null ? $input.role : ($input.email == "admin@example.com" ? "admin" : "cliente")
       }
     } as $user
   
     // Create an authentiction token
     security.create_auth_token {
       table = "user"
-      extras = {}
+      extras = {role: $user.role}
       expiration = 86400
       id = $user.id
     } as $authToken

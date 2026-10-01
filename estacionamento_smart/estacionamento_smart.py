@@ -11,6 +11,7 @@ from estacionamento_smart.components.dashboard_card import dashboard_card
 # URLs base da API do Xano
 XANO_AUTH_API_URL = "https://x8ki-letl-twmt.n7.xano.io/api:o7T2IhYl"
 XANO_VEHICLE_API_URL = "https://x8ki-letl-twmt.n7.xano.io/api:vehicle"
+XANO_PARKING_API_URL = "https://x8ki-letl-twmt.n7.xano.io/api:parking"
 
 
 class AuthState(rx.State):
@@ -90,7 +91,7 @@ class AuthState(rx.State):
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"{XANO_API_URL}/auth/signup",
+                    f"{XANO_AUTH_API_URL}/auth/signup",
                     json={
                         "name": self.signup_name,
                         "email": self.signup_email,
@@ -118,7 +119,7 @@ class AuthState(rx.State):
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(
-                    f"{XANO_API_URL}/auth/me",
+                    f"{XANO_AUTH_API_URL}/auth/me",
                     headers={"Authorization": f"Bearer {self.token}"}
                 )
             if response.status_code == 200:
@@ -278,6 +279,252 @@ class VehicleState(rx.State):
             self.error_message = f"Erro de conexão: {str(e)}"
 
 
+class ParkingState(rx.State):
+    """Estado para gerenciamento de vagas e tarifas."""
+    vagas: list[dict] = []
+    tarifas: list[dict] = []
+    
+    # Form Vaga
+    vaga_id: int = 0
+    vaga_numero: str = ""
+    vaga_tipo: str = "carro"
+    vaga_status: str = "livre"
+    is_editing_vaga: bool = False
+
+    # Form Tarifa
+    tarifa_id: int = 0
+    tarifa_tipo_vaga: str = "carro"
+    tarifa_valor_hora: float = 10.0
+    is_editing_tarifa: bool = False
+
+    error_message: str = ""
+    success_message: str = ""
+    is_loading: bool = False
+
+    def set_vaga_numero(self, val: str):
+        self.vaga_numero = val or ""
+
+    def set_vaga_tipo(self, val: str):
+        self.vaga_tipo = val or "carro"
+
+    def set_vaga_status(self, val: str):
+        self.vaga_status = val or "livre"
+
+    def set_tarifa_tipo_vaga(self, val: str):
+        self.tarifa_tipo_vaga = val or "carro"
+
+    def set_tarifa_valor_hora(self, val: str):
+        try:
+            self.tarifa_valor_hora = float(val) if val else 0.0
+        except ValueError:
+            self.tarifa_valor_hora = 0.0
+
+    async def load_vagas(self):
+        auth = await self.get_state(AuthState)
+        if not auth.token:
+            return
+        self.is_loading = True
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    f"{XANO_PARKING_API_URL}/vaga",
+                    headers={"Authorization": f"Bearer {auth.token}"}
+                )
+            if response.status_code == 200:
+                self.vagas = response.json() or []
+            else:
+                self.vagas = []
+        except Exception as e:
+            self.error_message = f"Erro ao carregar vagas: {str(e)}"
+        finally:
+            self.is_loading = False
+
+    async def load_tarifas(self):
+        auth = await self.get_state(AuthState)
+        if not auth.token:
+            return
+        self.is_loading = True
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    f"{XANO_PARKING_API_URL}/tarifa",
+                    headers={"Authorization": f"Bearer {auth.token}"}
+                )
+            if response.status_code == 200:
+                self.tarifas = response.json() or []
+            else:
+                self.tarifas = []
+        except Exception as e:
+            self.error_message = f"Erro ao carregar tarifas: {str(e)}"
+        finally:
+            self.is_loading = False
+
+    def start_add_vaga(self):
+        self.vaga_id = 0
+        self.vaga_numero = ""
+        self.vaga_tipo = "carro"
+        self.vaga_status = "livre"
+        self.is_editing_vaga = False
+        self.error_message = ""
+        self.success_message = ""
+
+    def start_edit_vaga(self, vaga: dict):
+        self.vaga_id = vaga.get("id", 0)
+        self.vaga_numero = vaga.get("numero", "")
+        self.vaga_tipo = vaga.get("tipo", "carro")
+        self.vaga_status = vaga.get("status", "livre")
+        self.is_editing_vaga = True
+        self.error_message = ""
+        self.success_message = ""
+
+    async def save_vaga(self):
+        auth = await self.get_state(AuthState)
+        if not auth.token:
+            return
+        if auth.role_display != "Administrador":
+            self.error_message = "Acesso negado: apenas administradores podem gerenciar vagas."
+            return
+        self.error_message = ""
+        self.success_message = ""
+        self.is_loading = True
+        try:
+            payload = {
+                "numero": self.vaga_numero,
+                "tipo": self.vaga_tipo,
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                if self.vaga_id == 0:
+                    response = await client.post(
+                        f"{XANO_PARKING_API_URL}/vaga",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {auth.token}"}
+                    )
+                else:
+                    payload["id"] = self.vaga_id
+                    payload["status"] = self.vaga_status
+                    response = await client.put(
+                        f"{XANO_PARKING_API_URL}/vaga/{self.vaga_id}",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {auth.token}"}
+                    )
+            data = response.json()
+            if response.status_code in [200, 201]:
+                self.success_message = "Vaga salva com sucesso!"
+                self.start_add_vaga()
+                await self.load_vagas()
+            else:
+                self.error_message = data.get("message", "Erro ao salvar vaga (número duplicado ou inválido).")
+        except Exception as e:
+            self.error_message = f"Erro de conexão: {str(e)}"
+        finally:
+            self.is_loading = False
+
+    async def delete_vaga(self, vaga_id: int):
+        auth = await self.get_state(AuthState)
+        if not auth.token:
+            return
+        if auth.role_display != "Administrador":
+            self.error_message = "Acesso negado: apenas administradores podem excluir vagas."
+            return
+        self.error_message = ""
+        self.success_message = ""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.delete(
+                    f"{XANO_PARKING_API_URL}/vaga/{vaga_id}",
+                    headers={"Authorization": f"Bearer {auth.token}"}
+                )
+            if response.status_code == 200:
+                self.success_message = "Vaga excluída com sucesso!"
+                await self.load_vagas()
+            else:
+                data = response.json()
+                self.error_message = data.get("message", "Erro ao excluir vaga.")
+        except Exception as e:
+            self.error_message = f"Erro de conexão: {str(e)}"
+
+    def start_add_tarifa(self):
+        self.tarifa_id = 0
+        self.tarifa_tipo_vaga = "carro"
+        self.tarifa_valor_hora = 10.0
+        self.is_editing_tarifa = False
+        self.error_message = ""
+        self.success_message = ""
+
+    def start_edit_tarifa(self, tarifa: dict):
+        self.tarifa_id = tarifa.get("id", 0)
+        self.tarifa_tipo_vaga = tarifa.get("tipo_vaga", "carro")
+        self.tarifa_valor_hora = float(tarifa.get("valor_hora", 10.0))
+        self.is_editing_tarifa = True
+        self.error_message = ""
+        self.success_message = ""
+
+    async def save_tarifa(self):
+        auth = await self.get_state(AuthState)
+        if not auth.token:
+            return
+        if auth.role_display != "Administrador":
+            self.error_message = "Acesso negado: apenas administradores podem gerenciar tarifas."
+            return
+        self.error_message = ""
+        self.success_message = ""
+        self.is_loading = True
+        try:
+            payload = {
+                "tipo_vaga": self.tarifa_tipo_vaga,
+                "valor_hora": self.tarifa_valor_hora,
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                if self.tarifa_id == 0:
+                    response = await client.post(
+                        f"{XANO_PARKING_API_URL}/tarifa",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {auth.token}"}
+                    )
+                else:
+                    payload["id"] = self.tarifa_id
+                    response = await client.put(
+                        f"{XANO_PARKING_API_URL}/tarifa/{self.tarifa_id}",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {auth.token}"}
+                    )
+            data = response.json()
+            if response.status_code in [200, 201]:
+                self.success_message = "Tarifa salva com sucesso!"
+                self.start_add_tarifa()
+                await self.load_tarifas()
+            else:
+                self.error_message = data.get("message", "Erro ao salvar tarifa (já existe tarifa para este tipo).")
+        except Exception as e:
+            self.error_message = f"Erro de conexão: {str(e)}"
+        finally:
+            self.is_loading = False
+
+    async def delete_tarifa(self, tarifa_id: int):
+        auth = await self.get_state(AuthState)
+        if not auth.token:
+            return
+        if auth.role_display != "Administrador":
+            self.error_message = "Acesso negado: apenas administradores podem excluir tarifas."
+            return
+        self.error_message = ""
+        self.success_message = ""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.delete(
+                    f"{XANO_PARKING_API_URL}/tarifa/{tarifa_id}",
+                    headers={"Authorization": f"Bearer {auth.token}"}
+                )
+            if response.status_code == 200:
+                self.success_message = "Tarifa excluída com sucesso!"
+                await self.load_tarifas()
+            else:
+                data = response.json()
+                self.error_message = data.get("message", "Erro ao excluir tarifa.")
+        except Exception as e:
+            self.error_message = f"Erro de conexão: {str(e)}"
+
+
 def index() -> rx.Component:
     return rx.vstack(
         navbar(AuthState),
@@ -323,17 +570,41 @@ def index() -> rx.Component:
                                 ),
                                 dashboard_card(
                                     icon="🅿️",
-                                    title="Vagas",
-                                    description="Consulte a disponibilidade de vagas em tempo real no estacionamento.",
-                                    href="#",
+                                    title="Consulta de Vagas",
+                                    description="Consulte a disponibilidade de vagas e tarifas do estacionamento.",
+                                    href="/vagas",
                                 ),
-                                dashboard_card(
-                                    icon="📅",
-                                    title="Reservas",
-                                    description="Crie, acompanhe e gerencie suas reservas de vagas com comodidade.",
-                                    href="#",
+                                rx.cond(
+                                    AuthState.role_display == "Administrador",
+                                    dashboard_card(
+                                        icon="⚙️",
+                                        title="Gestão de Vagas (Admin)",
+                                        description="Cadastre, edite e remova vagas do estacionamento.",
+                                        href="/admin/vagas",
+                                    ),
+                                    dashboard_card(
+                                        icon="📅",
+                                        title="Reservas",
+                                        description="Crie, acompanhe e gerencie suas reservas de vagas com comodidade.",
+                                        href="#",
+                                    ),
                                 ),
-                                columns=rx.breakpoints(initial="1", sm="2", md="3"),
+                                rx.cond(
+                                    AuthState.role_display == "Administrador",
+                                    dashboard_card(
+                                        icon="💰",
+                                        title="Gestão de Tarifas (Admin)",
+                                        description="Defina e atualize os valores por hora das tarifas.",
+                                        href="/admin/tarifas",
+                                    ),
+                                    dashboard_card(
+                                        icon="📅",
+                                        title="Histórico",
+                                        description="Visualize o histórico de estacionamento e comprovantes.",
+                                        href="#",
+                                    ),
+                                ),
+                                columns=rx.breakpoints(initial="1", sm="2", md="2"),
                                 spacing="5",
                                 width="100%",
                             ),
@@ -731,6 +1002,349 @@ def vehicles_page() -> rx.Component:
     )
 
 
+def admin_vagas_page() -> rx.Component:
+    return rx.vstack(
+        navbar(AuthState),
+        rx.center(
+            rx.container(
+                rx.vstack(
+                    rx.hstack(
+                        rx.link(rx.button("← Voltar ao Painel", variant="soft", size="2"), href="/"),
+                        rx.spacer(),
+                        align="center",
+                        width="100%",
+                    ),
+                    rx.heading("Gestão de Vagas (Admin)", size="7", weight="bold", color="var(--gray-12)"),
+                    rx.text("Cadastre, edite ou remova vagas do estacionamento.", size="3", color="var(--gray-11)"),
+                    rx.box(height="2"),
+                    rx.cond(
+                        ParkingState.error_message != "",
+                        rx.callout(ParkingState.error_message, icon="triangle_alert", color_scheme="red", size="2", width="100%"),
+                    ),
+                    rx.cond(
+                        ParkingState.success_message != "",
+                        rx.callout(ParkingState.success_message, icon="check", color_scheme="green", size="2", width="100%"),
+                    ),
+                    # Formulário de Vaga
+                    rx.card(
+                        rx.vstack(
+                            rx.heading(rx.cond(ParkingState.is_editing_vaga, "Editar Vaga", "Cadastrar Nova Vaga"), size="5", weight="bold"),
+                            rx.grid(
+                                rx.vstack(
+                                    rx.text("Número da Vaga", size="2", weight="bold"),
+                                    rx.input(placeholder="Ex: A01", value=ParkingState.vaga_numero, on_change=ParkingState.set_vaga_numero, width="100%"),
+                                    align="start", width="100%", spacing="1",
+                                ),
+                                rx.vstack(
+                                    rx.text("Tipo", size="2", weight="bold"),
+                                    rx.select(["carro", "moto", "pcd", "eletrico"], value=ParkingState.vaga_tipo, on_change=ParkingState.set_vaga_tipo, width="100%"),
+                                    align="start", width="100%", spacing="1",
+                                ),
+                                rx.cond(
+                                    ParkingState.is_editing_vaga,
+                                    rx.vstack(
+                                        rx.text("Status", size="2", weight="bold"),
+                                        rx.select(["livre", "ocupada", "reservada"], value=ParkingState.vaga_status, on_change=ParkingState.set_vaga_status, width="100%"),
+                                        align="start", width="100%", spacing="1",
+                                    ),
+                                    rx.fragment(),
+                                ),
+                                columns=rx.breakpoints(initial="1", sm="2", md="3"),
+                                spacing="4",
+                                width="100%",
+                            ),
+                            rx.hstack(
+                                rx.button(
+                                    rx.cond(ParkingState.is_editing_vaga, "Atualizar Vaga", "Cadastrar Vaga"),
+                                    on_click=ParkingState.save_vaga,
+                                    color_scheme="indigo",
+                                    size="3",
+                                    cursor="pointer",
+                                ),
+                                rx.cond(
+                                    ParkingState.is_editing_vaga,
+                                    rx.button("Cancelar", on_click=ParkingState.start_add_vaga, variant="soft", color_scheme="gray", size="3", cursor="pointer"),
+                                ),
+                                spacing="3",
+                                padding_top="2",
+                            ),
+                            spacing="4",
+                            width="100%",
+                        ),
+                        padding="5",
+                        width="100%",
+                        border="1px solid var(--gray-4)",
+                    ),
+                    rx.box(height="2"),
+                    rx.heading("Lista de Vagas", size="6", weight="bold", color="var(--gray-12)"),
+                    rx.cond(
+                        ParkingState.vagas.length() > 0,
+                        rx.table.root(
+                            rx.table.header(
+                                rx.table.row(
+                                    rx.table.column_header_cell("Número"),
+                                    rx.table.column_header_cell("Tipo"),
+                                    rx.table.column_header_cell("Status"),
+                                    rx.table.column_header_cell("Ações"),
+                                )
+                            ),
+                            rx.table.body(
+                                rx.foreach(
+                                    ParkingState.vagas,
+                                    lambda v: rx.table.row(
+                                        rx.table.cell(v["numero"], weight="bold"),
+                                        rx.table.cell(v["tipo"]),
+                                        rx.table.cell(v["status"]),
+                                        rx.table.cell(
+                                            rx.hstack(
+                                                rx.button("Editar", size="1", variant="soft", color_scheme="indigo", on_click=lambda: ParkingState.start_edit_vaga(v)),
+                                                rx.button("Excluir", size="1", variant="soft", color_scheme="red", on_click=lambda: ParkingState.delete_vaga(v["id"])),
+                                                spacing="2",
+                                            )
+                                        ),
+                                    )
+                                )
+                            ),
+                            width="100%",
+                            variant="surface",
+                        ),
+                        rx.card(
+                            rx.center(rx.text("Nenhuma vaga cadastrada.", size="3", color="var(--gray-11)"), padding="6"),
+                            width="100%",
+                            border="1px solid var(--gray-4)",
+                        ),
+                    ),
+                    spacing="5",
+                    width="100%",
+                    on_mount=ParkingState.load_vagas,
+                ),
+                max_width=CONTAINER_MAX_WIDTH,
+                width="100%",
+                padding_x="4",
+                padding_y="8",
+            ),
+            width="100%",
+        ),
+        width="100%",
+        min_height="100vh",
+        background="var(--color-background)",
+    )
+
+
+def admin_tarifas_page() -> rx.Component:
+    return rx.vstack(
+        navbar(AuthState),
+        rx.center(
+            rx.container(
+                rx.vstack(
+                    rx.hstack(
+                        rx.link(rx.button("← Voltar ao Painel", variant="soft", size="2"), href="/"),
+                        rx.spacer(),
+                        align="center",
+                        width="100%",
+                    ),
+                    rx.heading("Gestão de Tarifas (Admin)", size="7", weight="bold", color="var(--gray-12)"),
+                    rx.text("Defina e atualize os valores por hora para cada tipo de vaga.", size="3", color="var(--gray-11)"),
+                    rx.box(height="2"),
+                    rx.cond(
+                        ParkingState.error_message != "",
+                        rx.callout(ParkingState.error_message, icon="triangle_alert", color_scheme="red", size="2", width="100%"),
+                    ),
+                    rx.cond(
+                        ParkingState.success_message != "",
+                        rx.callout(ParkingState.success_message, icon="check", color_scheme="green", size="2", width="100%"),
+                    ),
+                    # Formulário de Tarifa
+                    rx.card(
+                        rx.vstack(
+                            rx.heading(rx.cond(ParkingState.is_editing_tarifa, "Editar Tarifa", "Nova Tarifa"), size="5", weight="bold"),
+                            rx.grid(
+                                rx.vstack(
+                                    rx.text("Tipo de Vaga", size="2", weight="bold"),
+                                    rx.select(["carro", "moto", "pcd", "eletrico"], value=ParkingState.tarifa_tipo_vaga, on_change=ParkingState.set_tarifa_tipo_vaga, width="100%"),
+                                    align="start", width="100%", spacing="1",
+                                ),
+                                rx.vstack(
+                                    rx.text("Valor por Hora (R$)", size="2", weight="bold"),
+                                    rx.input(placeholder="10.00", value=ParkingState.tarifa_valor_hora.to_string(), on_change=ParkingState.set_tarifa_valor_hora, width="100%"),
+                                    align="start", width="100%", spacing="1",
+                                ),
+                                columns=rx.breakpoints(initial="1", sm="2"),
+                                spacing="4",
+                                width="100%",
+                            ),
+                            rx.hstack(
+                                rx.button(
+                                    rx.cond(ParkingState.is_editing_tarifa, "Atualizar Tarifa", "Cadastrar Tarifa"),
+                                    on_click=ParkingState.save_tarifa,
+                                    color_scheme="indigo",
+                                    size="3",
+                                    cursor="pointer",
+                                ),
+                                rx.cond(
+                                    ParkingState.is_editing_tarifa,
+                                    rx.button("Cancelar", on_click=ParkingState.start_add_tarifa, variant="soft", color_scheme="gray", size="3", cursor="pointer"),
+                                ),
+                                spacing="3",
+                                padding_top="2",
+                            ),
+                            spacing="4",
+                            width="100%",
+                        ),
+                        padding="5",
+                        width="100%",
+                        border="1px solid var(--gray-4)",
+                    ),
+                    rx.box(height="2"),
+                    rx.heading("Lista de Tarifas", size="6", weight="bold", color="var(--gray-12)"),
+                    rx.cond(
+                        ParkingState.tarifas.length() > 0,
+                        rx.table.root(
+                            rx.table.header(
+                                rx.table.row(
+                                    rx.table.column_header_cell("Tipo de Vaga"),
+                                    rx.table.column_header_cell("Valor por Hora (R$)"),
+                                    rx.table.column_header_cell("Ações"),
+                                )
+                            ),
+                            rx.table.body(
+                                rx.foreach(
+                                    ParkingState.tarifas,
+                                    lambda t: rx.table.row(
+                                        rx.table.cell(t["tipo_vaga"], weight="bold"),
+                                        rx.table.cell(t["valor_hora"]),
+                                        rx.table.cell(
+                                            rx.hstack(
+                                                rx.button("Editar", size="1", variant="soft", color_scheme="indigo", on_click=lambda: ParkingState.start_edit_tarifa(t)),
+                                                rx.button("Excluir", size="1", variant="soft", color_scheme="red", on_click=lambda: ParkingState.delete_tarifa(t["id"])),
+                                                spacing="2",
+                                            )
+                                        ),
+                                    )
+                                )
+                            ),
+                            width="100%",
+                            variant="surface",
+                        ),
+                        rx.card(
+                            rx.center(rx.text("Nenhuma tarifa cadastrada.", size="3", color="var(--gray-11)"), padding="6"),
+                            width="100%",
+                            border="1px solid var(--gray-4)",
+                        ),
+                    ),
+                    spacing="5",
+                    width="100%",
+                    on_mount=ParkingState.load_tarifas,
+                ),
+                max_width=CONTAINER_MAX_WIDTH,
+                width="100%",
+                padding_x="4",
+                padding_y="8",
+            ),
+            width="100%",
+        ),
+        width="100%",
+        min_height="100vh",
+        background="var(--color-background)",
+    )
+
+
+def consultar_vagas_page() -> rx.Component:
+    return rx.vstack(
+        navbar(AuthState),
+        rx.center(
+            rx.container(
+                rx.vstack(
+                    rx.hstack(
+                        rx.link(rx.button("← Voltar ao Painel", variant="soft", size="2"), href="/"),
+                        rx.spacer(),
+                        align="center",
+                        width="100%",
+                    ),
+                    rx.heading("Consulta de Vagas e Tarifas", size="7", weight="bold", color="var(--gray-12)"),
+                    rx.text("Visualize a disponibilidade atual das vagas e os valores das tarifas vigentes.", size="3", color="var(--gray-11)"),
+                    rx.box(height="2"),
+                    rx.heading("Vagas do Estacionamento", size="6", weight="bold", color="var(--gray-12)"),
+                    rx.cond(
+                        ParkingState.vagas.length() > 0,
+                        rx.table.root(
+                            rx.table.header(
+                                rx.table.row(
+                                    rx.table.column_header_cell("Número"),
+                                    rx.table.column_header_cell("Tipo"),
+                                    rx.table.column_header_cell("Status"),
+                                )
+                            ),
+                            rx.table.body(
+                                rx.foreach(
+                                    ParkingState.vagas,
+                                    lambda v: rx.table.row(
+                                        rx.table.cell(v["numero"], weight="bold"),
+                                        rx.table.cell(v["tipo"]),
+                                        rx.table.cell(
+                                            rx.badge(
+                                                v["status"],
+                                                color_scheme=rx.cond(v["status"] == "livre", "green", rx.cond(v["status"] == "ocupada", "red", "yellow")),
+                                            )
+                                        ),
+                                    )
+                                )
+                            ),
+                            width="100%",
+                            variant="surface",
+                        ),
+                        rx.card(
+                            rx.center(rx.text("Nenhuma vaga cadastrada no momento.", size="3", color="var(--gray-11)"), padding="6"),
+                            width="100%",
+                            border="1px solid var(--gray-4)",
+                        ),
+                    ),
+                    rx.box(height="4"),
+                    rx.heading("Tarifas Vigentes", size="6", weight="bold", color="var(--gray-12)"),
+                    rx.cond(
+                        ParkingState.tarifas.length() > 0,
+                        rx.table.root(
+                            rx.table.header(
+                                rx.table.row(
+                                    rx.table.column_header_cell("Tipo de Vaga"),
+                                    rx.table.column_header_cell("Valor por Hora (R$)"),
+                                )
+                            ),
+                            rx.table.body(
+                                rx.foreach(
+                                    ParkingState.tarifas,
+                                    lambda t: rx.table.row(
+                                        rx.table.cell(t["tipo_vaga"], weight="bold"),
+                                        rx.table.cell(t["valor_hora"]),
+                                    )
+                                )
+                            ),
+                            width="100%",
+                            variant="surface",
+                        ),
+                        rx.card(
+                            rx.center(rx.text("Nenhuma tarifa cadastrada no momento.", size="3", color="var(--gray-11)"), padding="6"),
+                            width="100%",
+                            border="1px solid var(--gray-4)",
+                        ),
+                    ),
+                    spacing="5",
+                    width="100%",
+                    on_mount=[ParkingState.load_vagas, ParkingState.load_tarifas],
+                ),
+                max_width=CONTAINER_MAX_WIDTH,
+                width="100%",
+                padding_x="4",
+                padding_y="8",
+            ),
+            width="100%",
+        ),
+        width="100%",
+        min_height="100vh",
+        background="var(--color-background)",
+    )
+
+
 app = rx.App(
     theme=rx.theme(
         appearance=THEME_APPEARANCE,
@@ -743,3 +1357,6 @@ app.add_page(index, route="/")
 app.add_page(login_page, route="/login")
 app.add_page(signup_page, route="/signup")
 app.add_page(vehicles_page, route="/vehicles", on_load=VehicleState.load_vehicles)
+app.add_page(admin_vagas_page, route="/admin/vagas", on_load=ParkingState.load_vagas)
+app.add_page(admin_tarifas_page, route="/admin/tarifas", on_load=ParkingState.load_tarifas)
+app.add_page(consultar_vagas_page, route="/vagas", on_load=[ParkingState.load_vagas, ParkingState.load_tarifas])

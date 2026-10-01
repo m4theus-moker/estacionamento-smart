@@ -36,7 +36,7 @@ query "auth/login" verb=POST {
     // Create an authentication token
     security.create_auth_token {
       table = "user"
-      extras = {}
+      extras = {role: $user.role}
       expiration = 86400
       id = $user.id
     } as $authToken
