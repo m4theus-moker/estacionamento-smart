@@ -4,6 +4,7 @@ table vaga {
   schema {
     int id
     timestamp created_at?=now
+    int location_id
     text numero filters=trim
     enum tipo {
       values = ["carro", "moto", "pcd", "eletrico"]
@@ -15,7 +16,8 @@ table vaga {
 
   index = [
     {type: "primary", field: [{name: "id"}]}
-    {type: "btree|unique", field: [{name: "numero", op: "asc"}]}
+    {type: "btree", field: [{name: "location_id", op: "asc"}]}
+    {type: "btree|unique", field: [{name: "location_id", op: "asc"}, {name: "numero", op: "asc"}]}
   ]
 
   tags = ["parking-management"]

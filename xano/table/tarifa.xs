@@ -4,6 +4,7 @@ table tarifa {
   schema {
     int id
     timestamp created_at?=now
+    int location_id
     enum tipo_vaga {
       values = ["carro", "moto", "pcd", "eletrico"]
     }
@@ -12,7 +13,8 @@ table tarifa {
 
   index = [
     {type: "primary", field: [{name: "id"}]}
-    {type: "btree|unique", field: [{name: "tipo_vaga", op: "asc"}]}
+    {type: "btree", field: [{name: "location_id", op: "asc"}]}
+    {type: "btree|unique", field: [{name: "location_id", op: "asc"}, {name: "tipo_vaga", op: "asc"}]}
   ]
 
   tags = ["parking-management"]

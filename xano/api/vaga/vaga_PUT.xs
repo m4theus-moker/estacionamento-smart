@@ -1,9 +1,10 @@
-query "vaga" verb=PUT {
+query "vaga/{id}" verb=PUT {
   api_group = "Parking Management"
   auth = "user"
 
   input {
     int id
+    int location_id
     text numero filters=trim
     enum tipo {
       values = ["carro", "moto", "pcd", "eletrico"]
@@ -36,19 +37,20 @@ query "vaga" verb=PUT {
     }
 
     db.query vaga {
-      where = $db.vaga.numero == $input.numero && $db.vaga.id != $input.id
+      where = $db.vaga.location_id == $input.location_id && $db.vaga.numero == $input.numero && $db.vaga.id != $input.id
       return = {type: "single"}
     } as $existing_vaga
 
     precondition ($existing_vaga == null) {
       error_type = "inputerror"
-      error = "Já existe outra vaga cadastrada com este número."
+      error = "Já existe outra vaga cadastrada com este número neste local."
     }
 
     db.edit vaga {
       field_name = "id"
       field_value = $input.id
       data = {
+        location_id: $input.location_id
         numero: $input.numero
         tipo  : $input.tipo
         status: $input.status

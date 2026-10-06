@@ -1,4 +1,4 @@
-query "tarifa" verb=DELETE {
+query "tarifa/{id}" verb=DELETE {
   api_group = "Parking Management"
   auth = "user"
 

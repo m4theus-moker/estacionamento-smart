@@ -142,6 +142,152 @@ class AuthState(rx.State):
         return rx.redirect("/login")
 
 
+class LocationState(rx.State):
+    """Estado para gerenciamento de locais/filiais."""
+    locations: list[dict] = []
+    selected_location_id: int = 0
+    selected_location_name: str = ""
+
+    # Form Location (Admin)
+    loc_id: int = 0
+    loc_name: str = ""
+    loc_address: str = ""
+    loc_description: str = ""
+    is_editing_loc: bool = False
+
+    error_message: str = ""
+    success_message: str = ""
+    is_loading: bool = False
+
+    @rx.var
+    def location_items(self) -> list[str]:
+        return [l.get("name", "") for l in self.locations]
+
+    def set_selected_location_name(self, name: str):
+        self.selected_location_name = name or ""
+        for loc in self.locations:
+            if loc.get("name") == name:
+                self.selected_location_id = loc.get("id", 0)
+                break
+
+    def set_loc_name(self, val: str):
+        self.loc_name = val or ""
+
+    def set_loc_address(self, val: str):
+        self.loc_address = val or ""
+
+    def set_loc_description(self, val: str):
+        self.loc_description = val or ""
+
+    async def load_locations(self):
+        auth = await self.get_state(AuthState)
+        if not auth.token:
+            return
+        self.is_loading = True
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    f"{XANO_PARKING_API_URL}/location",
+                    headers={"Authorization": f"Bearer {auth.token}"}
+                )
+            if response.status_code == 200:
+                self.locations = response.json() or []
+                if self.locations:
+                    if self.selected_location_id == 0 or not self.selected_location_name or self.selected_location_name not in [l.get("name") for l in self.locations]:
+                        self.selected_location_id = self.locations[0].get("id", 0)
+                        self.selected_location_name = self.locations[0].get("name", "")
+            else:
+                self.locations = []
+        except Exception as e:
+            self.error_message = f"Erro ao carregar locais: {str(e)}"
+        finally:
+            self.is_loading = False
+
+    def start_add_loc(self):
+        self.loc_id = 0
+        self.loc_name = ""
+        self.loc_address = ""
+        self.loc_description = ""
+        self.is_editing_loc = False
+        self.error_message = ""
+        self.success_message = ""
+
+    def start_edit_loc(self, loc: dict):
+        self.loc_id = loc.get("id", 0)
+        self.loc_name = loc.get("name", "")
+        self.loc_address = loc.get("address", "")
+        self.loc_description = loc.get("description", "")
+        self.is_editing_loc = True
+        self.error_message = ""
+        self.success_message = ""
+
+    async def save_location(self):
+        auth = await self.get_state(AuthState)
+        if not auth.token:
+            return
+        if auth.role_display != "Administrador":
+            self.error_message = "Acesso negado: apenas administradores podem gerenciar locais."
+            return
+        self.error_message = ""
+        self.success_message = ""
+        self.is_loading = True
+        try:
+            payload = {
+                "name": self.loc_name,
+                "address": self.loc_address,
+                "description": self.loc_description,
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                if self.loc_id == 0:
+                    response = await client.post(
+                        f"{XANO_PARKING_API_URL}/location",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {auth.token}"}
+                    )
+                else:
+                    payload["id"] = self.loc_id
+                    response = await client.put(
+                        f"{XANO_PARKING_API_URL}/location/{self.loc_id}",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {auth.token}"}
+                    )
+            data = response.json()
+            if response.status_code in [200, 201]:
+                self.success_message = "Local salvo com sucesso!"
+                self.start_add_loc()
+                await self.load_locations()
+            else:
+                self.error_message = data.get("message", "Erro ao salvar local.")
+        except Exception as e:
+            self.error_message = f"Erro de conexão: {str(e)}"
+        finally:
+            self.is_loading = False
+
+    async def delete_location(self, loc_id: int):
+        auth = await self.get_state(AuthState)
+        if not auth.token:
+            return
+        if auth.role_display != "Administrador":
+            self.error_message = "Acesso negado: apenas administradores podem excluir locais."
+            return
+        self.error_message = ""
+        self.success_message = ""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.delete(
+                    f"{XANO_PARKING_API_URL}/location/{loc_id}",
+                    headers={"Authorization": f"Bearer {auth.token}"}
+                )
+            if response.status_code == 200:
+                self.success_message = "Local excluído com sucesso!"
+                await self.load_locations()
+            else:
+                data = response.json()
+                self.error_message = data.get("message", "Erro ao excluir local.")
+        except Exception as e:
+            self.error_message = f"Erro de conexão: {str(e)}"
+
+
 class VehicleState(rx.State):
     """Estado para gerenciamento de veículos."""
     vehicles: list[dict] = []
@@ -321,13 +467,18 @@ class ParkingState(rx.State):
 
     async def load_vagas(self):
         auth = await self.get_state(AuthState)
+        loc_state = await self.get_state(LocationState)
         if not auth.token:
             return
         self.is_loading = True
         try:
+            params = {}
+            if loc_state.selected_location_id > 0:
+                params["location_id"] = loc_state.selected_location_id
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(
                     f"{XANO_PARKING_API_URL}/vaga",
+                    params=params,
                     headers={"Authorization": f"Bearer {auth.token}"}
                 )
             if response.status_code == 200:
@@ -341,13 +492,18 @@ class ParkingState(rx.State):
 
     async def load_tarifas(self):
         auth = await self.get_state(AuthState)
+        loc_state = await self.get_state(LocationState)
         if not auth.token:
             return
         self.is_loading = True
         try:
+            params = {}
+            if loc_state.selected_location_id > 0:
+                params["location_id"] = loc_state.selected_location_id
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(
                     f"{XANO_PARKING_API_URL}/tarifa",
+                    params=params,
                     headers={"Authorization": f"Bearer {auth.token}"}
                 )
             if response.status_code == 200:
@@ -379,16 +535,21 @@ class ParkingState(rx.State):
 
     async def save_vaga(self):
         auth = await self.get_state(AuthState)
+        loc_state = await self.get_state(LocationState)
         if not auth.token:
             return
         if auth.role_display != "Administrador":
             self.error_message = "Acesso negado: apenas administradores podem gerenciar vagas."
+            return
+        if loc_state.selected_location_id <= 0:
+            self.error_message = "Selecione um local válido antes de cadastrar uma vaga."
             return
         self.error_message = ""
         self.success_message = ""
         self.is_loading = True
         try:
             payload = {
+                "location_id": loc_state.selected_location_id,
                 "numero": self.vaga_numero,
                 "tipo": self.vaga_tipo,
             }
@@ -401,6 +562,7 @@ class ParkingState(rx.State):
                     )
                 else:
                     payload["id"] = self.vaga_id
+                    payload["location_id"] = loc_state.selected_location_id
                     payload["status"] = self.vaga_status
                     response = await client.put(
                         f"{XANO_PARKING_API_URL}/vaga/{self.vaga_id}",
@@ -461,16 +623,21 @@ class ParkingState(rx.State):
 
     async def save_tarifa(self):
         auth = await self.get_state(AuthState)
+        loc_state = await self.get_state(LocationState)
         if not auth.token:
             return
         if auth.role_display != "Administrador":
             self.error_message = "Acesso negado: apenas administradores podem gerenciar tarifas."
+            return
+        if loc_state.selected_location_id <= 0:
+            self.error_message = "Selecione um local válido antes de cadastrar uma tarifa."
             return
         self.error_message = ""
         self.success_message = ""
         self.is_loading = True
         try:
             payload = {
+                "location_id": loc_state.selected_location_id,
                 "tipo_vaga": self.tarifa_tipo_vaga,
                 "valor_hora": self.tarifa_valor_hora,
             }
@@ -483,6 +650,7 @@ class ParkingState(rx.State):
                     )
                 else:
                     payload["id"] = self.tarifa_id
+                    payload["location_id"] = loc_state.selected_location_id
                     response = await client.put(
                         f"{XANO_PARKING_API_URL}/tarifa/{self.tarifa_id}",
                         json=payload,
@@ -525,6 +693,21 @@ class ParkingState(rx.State):
             self.error_message = f"Erro de conexão: {str(e)}"
 
 
+def location_selector_widget() -> rx.Component:
+    return rx.hstack(
+        rx.text("Unidade:", size="2", weight="bold", color="var(--gray-11)"),
+        rx.select(
+            LocationState.location_items,
+            value=LocationState.selected_location_name,
+            on_change=LocationState.set_selected_location_name,
+            size="2",
+        ),
+        on_mount=LocationState.load_locations,
+        align="center",
+        spacing="2",
+    )
+
+
 def index() -> rx.Component:
     return rx.vstack(
         navbar(AuthState),
@@ -535,8 +718,18 @@ def index() -> rx.Component:
                         AuthState.token != "",
                         # Dashboard Logado
                         rx.vstack(
-                            rx.heading(f"Olá, {AuthState.name}!", size="8", weight="bold", color="var(--gray-12)"),
-                            rx.text("Bem-vindo ao painel de controle do Estacionamento Smart.", size="4", color="var(--gray-11)"),
+                            rx.hstack(
+                                rx.vstack(
+                                    rx.heading(f"Olá, {AuthState.name}!", size="8", weight="bold", color="var(--gray-12)"),
+                                    rx.text("Bem-vindo ao painel de controle do Estacionamento Smart.", size="4", color="var(--gray-11)"),
+                                    spacing="1",
+                                    align="start",
+                                ),
+                                rx.spacer(),
+                                location_selector_widget(),
+                                width="100%",
+                                align="center",
+                            ),
                             rx.box(height="2"),
                             # Card de Perfil
                             rx.card(
@@ -573,6 +766,16 @@ def index() -> rx.Component:
                                     title="Consulta de Vagas",
                                     description="Consulte a disponibilidade de vagas e tarifas do estacionamento.",
                                     href="/vagas",
+                                ),
+                                rx.cond(
+                                    AuthState.role_display == "Administrador",
+                                    dashboard_card(
+                                        icon="🏢",
+                                        title="Gestão de Locais (Admin)",
+                                        description="Cadastre e gerencie as unidades/filiais do estacionamento.",
+                                        href="/admin/locations",
+                                    ),
+                                    rx.fragment(),
                                 ),
                                 rx.cond(
                                     AuthState.role_display == "Administrador",
@@ -1002,6 +1205,131 @@ def vehicles_page() -> rx.Component:
     )
 
 
+def admin_locations_page() -> rx.Component:
+    return rx.vstack(
+        navbar(AuthState),
+        rx.center(
+            rx.container(
+                rx.vstack(
+                    rx.hstack(
+                        rx.link(rx.button("← Voltar ao Painel", variant="soft", size="2"), href="/"),
+                        rx.spacer(),
+                        align="center",
+                        width="100%",
+                    ),
+                    rx.heading("Gestão de Locais / Unidades (Admin)", size="7", weight="bold", color="var(--gray-12)"),
+                    rx.text("Cadastre e gerencie as unidades ou filiais do estacionamento.", size="3", color="var(--gray-11)"),
+                    rx.box(height="2"),
+                    rx.cond(
+                        LocationState.error_message != "",
+                        rx.callout(LocationState.error_message, icon="triangle_alert", color_scheme="red", size="2", width="100%"),
+                    ),
+                    rx.cond(
+                        LocationState.success_message != "",
+                        rx.callout(LocationState.success_message, icon="check", color_scheme="green", size="2", width="100%"),
+                    ),
+                    # Formulário de Local
+                    rx.card(
+                        rx.vstack(
+                            rx.heading(rx.cond(LocationState.is_editing_loc, "Editar Local", "Novo Local"), size="5", weight="bold"),
+                            rx.grid(
+                                rx.vstack(
+                                    rx.text("Nome do Local", size="2", weight="bold"),
+                                    rx.input(placeholder="Ex: Matriz Centro", value=LocationState.loc_name, on_change=LocationState.set_loc_name, width="100%"),
+                                    align="start", width="100%", spacing="1",
+                                ),
+                                rx.vstack(
+                                    rx.text("Endereço", size="2", weight="bold"),
+                                    rx.input(placeholder="Ex: Av. Principal, 1000", value=LocationState.loc_address, on_change=LocationState.set_loc_address, width="100%"),
+                                    align="start", width="100%", spacing="1",
+                                ),
+                                columns=rx.breakpoints(initial="1", sm="2"),
+                                spacing="4",
+                                width="100%",
+                            ),
+                            rx.vstack(
+                                rx.text("Descrição", size="2", weight="bold"),
+                                rx.input(placeholder="Descrição da unidade...", value=LocationState.loc_description, on_change=LocationState.set_loc_description, width="100%"),
+                                align="start", width="100%", spacing="1",
+                            ),
+                            rx.hstack(
+                                rx.button(
+                                    rx.cond(LocationState.is_editing_loc, "Atualizar Local", "Cadastrar Local"),
+                                    on_click=LocationState.save_location,
+                                    color_scheme="indigo",
+                                    size="3",
+                                    cursor="pointer",
+                                ),
+                                rx.cond(
+                                    LocationState.is_editing_loc,
+                                    rx.button("Cancelar", on_click=LocationState.start_add_loc, variant="soft", color_scheme="gray", size="3", cursor="pointer"),
+                                ),
+                                spacing="3",
+                                padding_top="2",
+                            ),
+                            spacing="4",
+                            width="100%",
+                        ),
+                        padding="5",
+                        width="100%",
+                        border="1px solid var(--gray-4)",
+                    ),
+                    rx.box(height="2"),
+                    rx.heading("Lista de Unidades", size="6", weight="bold", color="var(--gray-12)"),
+                    rx.cond(
+                        LocationState.locations.length() > 0,
+                        rx.table.root(
+                            rx.table.header(
+                                rx.table.row(
+                                    rx.table.column_header_cell("Nome"),
+                                    rx.table.column_header_cell("Endereço"),
+                                    rx.table.column_header_cell("Descrição"),
+                                    rx.table.column_header_cell("Ações"),
+                                )
+                            ),
+                            rx.table.body(
+                                rx.foreach(
+                                    LocationState.locations,
+                                    lambda l: rx.table.row(
+                                        rx.table.cell(l["name"], weight="bold"),
+                                        rx.table.cell(l["address"]),
+                                        rx.table.cell(l["description"]),
+                                        rx.table.cell(
+                                            rx.hstack(
+                                                rx.button("Editar", size="1", variant="soft", color_scheme="indigo", on_click=lambda: LocationState.start_edit_loc(l)),
+                                                rx.button("Excluir", size="1", variant="soft", color_scheme="red", on_click=lambda: LocationState.delete_location(l["id"])),
+                                                spacing="2",
+                                            )
+                                        ),
+                                    )
+                                )
+                            ),
+                            width="100%",
+                            variant="surface",
+                        ),
+                        rx.card(
+                            rx.center(rx.text("Nenhum local cadastrado.", size="3", color="var(--gray-11)"), padding="6"),
+                            width="100%",
+                            border="1px solid var(--gray-4)",
+                        ),
+                    ),
+                    spacing="5",
+                    width="100%",
+                    on_mount=LocationState.load_locations,
+                ),
+                max_width=CONTAINER_MAX_WIDTH,
+                width="100%",
+                padding_x="4",
+                padding_y="8",
+            ),
+            width="100%",
+        ),
+        width="100%",
+        min_height="100vh",
+        background="var(--color-background)",
+    )
+
+
 def admin_vagas_page() -> rx.Component:
     return rx.vstack(
         navbar(AuthState),
@@ -1011,6 +1339,7 @@ def admin_vagas_page() -> rx.Component:
                     rx.hstack(
                         rx.link(rx.button("← Voltar ao Painel", variant="soft", size="2"), href="/"),
                         rx.spacer(),
+                        location_selector_widget(),
                         align="center",
                         width="100%",
                     ),
@@ -1031,6 +1360,16 @@ def admin_vagas_page() -> rx.Component:
                             rx.heading(rx.cond(ParkingState.is_editing_vaga, "Editar Vaga", "Cadastrar Nova Vaga"), size="5", weight="bold"),
                             rx.grid(
                                 rx.vstack(
+                                    rx.text("Unidade / Local", size="2", weight="bold"),
+                                    rx.select(
+                                        LocationState.location_items,
+                                        value=LocationState.selected_location_name,
+                                        on_change=LocationState.set_selected_location_name,
+                                        width="100%",
+                                    ),
+                                    align="start", width="100%", spacing="1",
+                                ),
+                                rx.vstack(
                                     rx.text("Número da Vaga", size="2", weight="bold"),
                                     rx.input(placeholder="Ex: A01", value=ParkingState.vaga_numero, on_change=ParkingState.set_vaga_numero, width="100%"),
                                     align="start", width="100%", spacing="1",
@@ -1049,7 +1388,7 @@ def admin_vagas_page() -> rx.Component:
                                     ),
                                     rx.fragment(),
                                 ),
-                                columns=rx.breakpoints(initial="1", sm="2", md="3"),
+                                columns=rx.breakpoints(initial="1", sm="2", md="4"),
                                 spacing="4",
                                 width="100%",
                             ),
@@ -1116,7 +1455,7 @@ def admin_vagas_page() -> rx.Component:
                     ),
                     spacing="5",
                     width="100%",
-                    on_mount=ParkingState.load_vagas,
+                    on_mount=[LocationState.load_locations, ParkingState.load_vagas],
                 ),
                 max_width=CONTAINER_MAX_WIDTH,
                 width="100%",
@@ -1140,6 +1479,7 @@ def admin_tarifas_page() -> rx.Component:
                     rx.hstack(
                         rx.link(rx.button("← Voltar ao Painel", variant="soft", size="2"), href="/"),
                         rx.spacer(),
+                        location_selector_widget(),
                         align="center",
                         width="100%",
                     ),
@@ -1234,7 +1574,7 @@ def admin_tarifas_page() -> rx.Component:
                     ),
                     spacing="5",
                     width="100%",
-                    on_mount=ParkingState.load_tarifas,
+                    on_mount=[LocationState.load_locations, ParkingState.load_tarifas],
                 ),
                 max_width=CONTAINER_MAX_WIDTH,
                 width="100%",
@@ -1258,6 +1598,7 @@ def consultar_vagas_page() -> rx.Component:
                     rx.hstack(
                         rx.link(rx.button("← Voltar ao Painel", variant="soft", size="2"), href="/"),
                         rx.spacer(),
+                        location_selector_widget(),
                         align="center",
                         width="100%",
                     ),
@@ -1330,7 +1671,7 @@ def consultar_vagas_page() -> rx.Component:
                     ),
                     spacing="5",
                     width="100%",
-                    on_mount=[ParkingState.load_vagas, ParkingState.load_tarifas],
+                    on_mount=[LocationState.load_locations, ParkingState.load_vagas, ParkingState.load_tarifas],
                 ),
                 max_width=CONTAINER_MAX_WIDTH,
                 width="100%",
@@ -1357,6 +1698,7 @@ app.add_page(index, route="/")
 app.add_page(login_page, route="/login")
 app.add_page(signup_page, route="/signup")
 app.add_page(vehicles_page, route="/vehicles", on_load=VehicleState.load_vehicles)
-app.add_page(admin_vagas_page, route="/admin/vagas", on_load=ParkingState.load_vagas)
-app.add_page(admin_tarifas_page, route="/admin/tarifas", on_load=ParkingState.load_tarifas)
-app.add_page(consultar_vagas_page, route="/vagas", on_load=[ParkingState.load_vagas, ParkingState.load_tarifas])
+app.add_page(admin_locations_page, route="/admin/locations", on_load=LocationState.load_locations)
+app.add_page(admin_vagas_page, route="/admin/vagas", on_load=[LocationState.load_locations, ParkingState.load_vagas])
+app.add_page(admin_tarifas_page, route="/admin/tarifas", on_load=[LocationState.load_locations, ParkingState.load_tarifas])
+app.add_page(consultar_vagas_page, route="/vagas", on_load=[LocationState.load_locations, ParkingState.load_vagas, ParkingState.load_tarifas])

@@ -3,6 +3,7 @@ query "vaga" verb=POST {
   auth = "user"
 
   input {
+    int location_id
     text numero filters=trim
     enum tipo {
       values = ["carro", "moto", "pcd", "eletrico"]
@@ -21,19 +22,20 @@ query "vaga" verb=POST {
       error = "Acesso negado. Apenas administradores podem gerenciar vagas."
     }
 
-    db.get vaga {
-      field_name = "numero"
-      field_value = $input.numero
+    db.query vaga {
+      where = $db.vaga.location_id == $input.location_id && $db.vaga.numero == $input.numero
+      return = {type: "single"}
     } as $existing
 
     precondition ($existing == null) {
       error_type = "inputerror"
-      error = "Já existe uma vaga cadastrada com este número."
+      error = "Já existe uma vaga cadastrada com este número neste local."
     }
 
     db.add vaga {
       data = {
         created_at: "now"
+        location_id: $input.location_id
         numero    : $input.numero
         tipo      : $input.tipo
         status    : "livre"

@@ -1,9 +1,10 @@
-query "tarifa" verb=PUT {
+query "tarifa/{id}" verb=PUT {
   api_group = "Parking Management"
   auth = "user"
 
   input {
     int id
+    int location_id
     enum tipo_vaga {
       values = ["carro", "moto", "pcd", "eletrico"]
     }
@@ -33,19 +34,20 @@ query "tarifa" verb=PUT {
     }
 
     db.query tarifa {
-      where = $db.tarifa.tipo_vaga == $input.tipo_vaga && $db.tarifa.id != $input.id
+      where = $db.tarifa.location_id == $input.location_id && $db.tarifa.tipo_vaga == $input.tipo_vaga && $db.tarifa.id != $input.id
       return = {type: "single"}
     } as $existing_tarifa
 
     precondition ($existing_tarifa == null) {
       error_type = "inputerror"
-      error = "Já existe outra tarifa cadastrada para este tipo de vaga."
+      error = "Já existe outra tarifa cadastrada para este tipo de vaga neste local."
     }
 
     db.edit tarifa {
       field_name = "id"
       field_value = $input.id
       data = {
+        location_id: $input.location_id
         tipo_vaga : $input.tipo_vaga
         valor_hora: $input.valor_hora
       }

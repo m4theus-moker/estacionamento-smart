@@ -3,6 +3,7 @@ query "tarifa" verb=POST {
   auth = "user"
 
   input {
+    int location_id
     enum tipo_vaga {
       values = ["carro", "moto", "pcd", "eletrico"]
     }
@@ -21,19 +22,20 @@ query "tarifa" verb=POST {
       error = "Acesso negado. Apenas administradores podem gerenciar tarifas."
     }
 
-    db.get tarifa {
-      field_name = "tipo_vaga"
-      field_value = $input.tipo_vaga
+    db.query tarifa {
+      where = $db.tarifa.location_id == $input.location_id && $db.tarifa.tipo_vaga == $input.tipo_vaga
+      return = {type: "single"}
     } as $existing
 
     precondition ($existing == null) {
       error_type = "inputerror"
-      error = "Já existe uma tarifa cadastrada para este tipo de vaga."
+      error = "Já existe uma tarifa cadastrada para este tipo de vaga neste local."
     }
 
     db.add tarifa {
       data = {
         created_at: "now"
+        location_id: $input.location_id
         tipo_vaga : $input.tipo_vaga
         valor_hora: $input.valor_hora
       }

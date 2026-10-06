@@ -1,4 +1,4 @@
-query "vehicle" verb=PUT {
+query "vehicle/{id}" verb=PUT {
   api_group = "Vehicle Management"
   auth = "user"
 
